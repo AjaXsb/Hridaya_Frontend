@@ -1,5 +1,6 @@
 "use client"
 
+import { useState } from "react"
 import { TrendingDown, TrendingUp } from "lucide-react"
 import { CurrencyBadge } from "@/components/market/CurrencyBadge"
 import { RangeBar } from "@/components/market/RangeBar"
@@ -18,7 +19,7 @@ import {
 import { formatPriceInCurrency, formatRelativeTime, formatSignedPercent } from "@/lib/format"
 import type { ItemSnapshotView } from "@/hooks/use-tracked-items"
 import { MOCK_NOW } from "@/mocks"
-import type { ChangeReference, TrackedItem } from "@/lib/types"
+import type { ChangeReference, RangeKey, TrackedItem } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
 const STREAM_LABEL: Record<TrackedItem["stream"], string> = {
@@ -37,6 +38,9 @@ const CHANGE_REFERENCE_LABEL: Record<ChangeReference, string> = {
 // stream — the one architectural rule everything hangs off.
 export function ItemCard({ item }: { item: TrackedItem }) {
   const { data: snapshot, isPending } = useItemSnapshot(item)
+  // Selected range window, owned here so the price chart and the range strip
+  // stay in sync — picking 1H zooms both to the last hour.
+  const [range, setRange] = useState<RangeKey>("1H")
 
   if (isPending || !snapshot) {
     return <TerminalLoader text="LOADING SNAPSHOT" />
@@ -91,11 +95,11 @@ export function ItemCard({ item }: { item: TrackedItem }) {
 
       {/* --- body: discriminated union --- */}
       <div className="mt-2 min-h-0 flex-1 border-t border-border-subtle">
-        <CardBodyRenderer snapshot={snapshot} item={item} />
+        <CardBodyRenderer snapshot={snapshot} item={item} rangeKey={range} />
       </div>
 
       {/* --- chrome: range bar overlay --- */}
-      <RangeBar snapshot={snapshot} refMs={MOCK_NOW} />
+      <RangeBar snapshot={snapshot} refMs={MOCK_NOW} selected={range} onSelect={setRange} />
 
       {/* --- chrome: footer stats --- */}
       <CardFooter snapshot={snapshot} rsi={rsi} />
@@ -104,12 +108,20 @@ export function ItemCard({ item }: { item: TrackedItem }) {
 }
 
 // Renders exactly one of three bodies based on the stream discriminant.
-function CardBodyRenderer({ snapshot, item }: { snapshot: ItemSnapshotView; item: TrackedItem }) {
+function CardBodyRenderer({
+  snapshot,
+  item,
+  rangeKey,
+}: {
+  snapshot: ItemSnapshotView
+  item: TrackedItem
+  rangeKey: RangeKey
+}) {
   const body = snapshot.body
   switch (body.kind) {
     case "priceoverview":
       // priceSegments is the hook's currency-broken view of body.series.
-      return <PriceOverviewBody segments={snapshot.priceSegments ?? []} />
+      return <PriceOverviewBody segments={snapshot.priceSegments ?? []} rangeKey={rangeKey} refMs={MOCK_NOW} />
     case "histogram":
       return <HistogramBody snapshot={body.snapshot} currency={item.currency} />
     case "activity":

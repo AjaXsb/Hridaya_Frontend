@@ -27,6 +27,12 @@ const DAY = 24 * 60 * MINUTE
 const SESSION_RUNTIME_MIN = 40
 const SESSION_START_T = new Date(NOW - SESSION_RUNTIME_MIN * MINUTE).toISOString()
 
+// price_history is ingested on a slower cadence than the live priceoverview
+// feed, so its freshest row lags "now" by an hour or two. The backbone's newest
+// point sits here; the live tip extends from there, with the dotted connector
+// bridging exactly this lag (NOT a day-wide gap).
+const HISTORY_LAG_MIN = 110 // ~1h50m behind now, ahead of the 40m live window
+
 // Deterministic pseudo-random in [0,1) from an integer seed.
 function deterministicNoise(seed: number): number {
   const x = Math.sin(seed * 127.1 + 311.7) * 43758.5453
@@ -66,18 +72,53 @@ const BFK_FADE: TrackedItem = {
   pollIntervalSec: 15,
 }
 
-// --- priceoverview series (AK Redline, USD) ----------------------------------
-// One point per minute for the session runtime. Some null gaps to prove the UI
+// Edge-case test item: a priceoverview whose live tip flips USD → INR. Exercises
+// the break path. Not the default-looking card.
+const DEAGLE_BLAZE_FLIP: TrackedItem = {
+  marketHashName: "Desert Eagle | Blaze (Factory New)",
+  appid: 730,
+  itemNameId: 4567890,
+  currency: "USD",
+  stream: "priceoverview",
+  pollIntervalSec: 60,
+}
+
+// --- priceoverview live series -----------------------------------------------
+// One point per minute for the session runtime — the thin live tip extending the
+// recent end of the long USD price_history backbone. Some null gaps prove the UI
 // tolerates missing samples.
 
-// This fixture deliberately switches currency partway through: the older portion
-// is tagged USD (~$44), then the backend starts emitting INR (~₹3,600) for the
-// most recent ~15 minutes. Exercises the connect-vs-break rule and axis rescale
-// against mock data before the backend lands. (The magnitudes are intentionally
-// far apart so a naive connected line would read as a fake crash.)
-const CURRENCY_SWITCH_AT_MIN = 14 // points newer than this are INR
-
+// Default everyday case: USD-canonical throughout. Combined with the USD
+// price_history backbone this renders as one seamless line — no break, no
+// divider, no faded tail.
 function buildPriceOverviewSeries(): PricePoint[] {
+  const base = 43.7
+  const points: PricePoint[] = []
+  for (let i = SESSION_RUNTIME_MIN; i >= 0; i--) {
+    const seed = i + 1
+    const drift = Math.sin(i / 6) * 0.9 + (deterministicNoise(seed) - 0.5) * 0.4
+    const median = base + drift
+    const lowest = median - 0.05 - deterministicNoise(seed * 3) * 0.15
+    // Sprinkle gaps: every ~9th sample the lowest/median didn't come back.
+    const gap = i % 9 === 4
+    points.push({
+      t: isoMinutesAgo(i),
+      currency: "USD",
+      lowest: gap ? null : Number(lowest.toFixed(2)),
+      median: gap ? null : Number(median.toFixed(2)),
+      volume: gap ? null : Math.round(8 + deterministicNoise(seed * 7) * 40),
+    })
+  }
+  return points
+}
+
+// Explicit edge-case TEST fixture (not the default look): the live tip switches
+// USD → INR partway. Combined with the USD backbone this fires the break path —
+// faded self-scaled USD tail + full-scale INR tip on its own axis. Magnitudes
+// far apart so a naive connected line would read as a fake crash.
+const CURRENCY_SWITCH_AT_MIN = 14 // tip points newer than this are INR
+
+function buildPriceOverviewSeriesWithFlip(): PricePoint[] {
   const points: PricePoint[] = []
   for (let i = SESSION_RUNTIME_MIN; i >= 0; i--) {
     const seed = i + 1
@@ -88,7 +129,6 @@ function buildPriceOverviewSeries(): PricePoint[] {
     const drift = Math.sin(i / 6) * scale + (deterministicNoise(seed) - 0.5) * scale * 0.4
     const median = base + drift
     const lowest = median - (isInr ? 6 : 0.05) - deterministicNoise(seed * 3) * (isInr ? 12 : 0.15)
-    // Sprinkle gaps: every ~9th sample the lowest/median didn't come back.
     const gap = i % 9 === 4
     points.push({
       t: isoMinutesAgo(i),
@@ -148,18 +188,24 @@ function buildTradeEvents(): TradeEvent[] {
 // EUR/GBP cards — the AWP's EUR-live / USD-history split is labeled, not hidden.
 
 function buildUsdHistory(baseUsd: number, seedOffset: number): HistoryPoint[] {
-  const points: HistoryPoint[] = []
-  for (let d = 90; d >= 0; d--) {
-    const seed = d + seedOffset
+  // Same expression for daily and the lagged tail point, so the backbone stays
+  // continuous into the recent end. `d` is in (fractional) days back from now.
+  const at = (d: number, seed: number): HistoryPoint => {
     const trend = Math.sin(d / 14) * baseUsd * 0.08
     const noise = (deterministicNoise(seed * 13) - 0.5) * baseUsd * 0.03
-    points.push({
+    return {
       t: new Date(NOW - d * DAY).toISOString(),
       currency: "USD", // history is canonical USD
       price: Number((baseUsd + trend + noise).toFixed(2)),
       volume: Math.round(80 + deterministicNoise(seed * 19) * 400),
-    })
+    }
   }
+
+  const points: HistoryPoint[] = []
+  // Daily backbone, oldest → most recent full day.
+  for (let d = 90; d >= 1; d--) points.push(at(d, d + seedOffset))
+  // Freshest row lags ~1-2h, not a full day — this is what the live tip extends.
+  points.push(at(HISTORY_LAG_MIN / (24 * 60), seedOffset))
   return points
 }
 
@@ -196,6 +242,14 @@ export const MOCK_ITEM_SNAPSHOTS: ItemSnapshot[] = [
     item: BFK_FADE,
     body: { kind: "activity", events: buildTradeEvents() },
     history: buildUsdHistory(2110, 300), // USD history; live tape is GBP
+    sessionStartT: SESSION_START_T,
+    lastUpdateT: isoMinutesAgo(0),
+  },
+  {
+    // Break-path test card: USD backbone + USD→INR live tip.
+    item: DEAGLE_BLAZE_FLIP,
+    body: { kind: "priceoverview", series: buildPriceOverviewSeriesWithFlip() },
+    history: buildUsdHistory(46.5, 400),
     sessionStartT: SESSION_START_T,
     lastUpdateT: isoMinutesAgo(0),
   },

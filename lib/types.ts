@@ -61,6 +61,22 @@ export interface HistoryPoint {
   volume: number
 }
 
+// The priceoverview chart is a long price_history backbone with the recent
+// priceoverview snapshots extending its tip — unified into one currency-tagged
+// timeline so segmentByCurrency can decide connect-vs-break across the whole
+// thing. Same currency throughout (the everyday USD case) → one segment → one
+// seamless line. A genuine currency difference → a break.
+export interface PriceTimelinePoint {
+  t: string
+  currency: Currency
+  price: number
+  volume: number | null
+  // Which feed the point came from. The long backbone is "history"; the recent
+  // tip is "live". Same currency stays one continuous line — this only marks
+  // where live begins (a data-source boundary, NOT a currency break).
+  source: "history" | "live"
+}
+
 // Discriminated union keyed off the item's stream. The ItemCard shell renders
 // one of these as its body.
 export type CardBody =

@@ -23,7 +23,7 @@ import {
 const MINUTE = 60_000
 const DAY = 24 * 60 * MINUTE
 
-const RANGE_WINDOW_MS: Record<RangeKey, number> = {
+export const RANGE_WINDOW_MS: Record<RangeKey, number> = {
   "5m": 5 * MINUTE,
   "1H": 60 * MINUTE,
   "1D": DAY,

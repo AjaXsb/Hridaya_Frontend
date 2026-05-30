@@ -1,6 +1,5 @@
 "use client"
 
-import { useState } from "react"
 import { rangePositionFraction, selectRangeView } from "@/lib/derive"
 import { formatPriceInCurrency } from "@/lib/format"
 import { type ItemSnapshot, type RangeKey, RANGE_KEYS } from "@/lib/types"
@@ -10,8 +9,20 @@ import { cn } from "@/lib/utils"
 // snapshots in native currency; long windows (1D/1W/All) read USD history. A
 // subtle marker states which source — so the AWP's EUR-live / USD-history split
 // is labeled, not hidden.
-export function RangeBar({ snapshot, refMs }: { snapshot: ItemSnapshot; refMs: number }) {
-  const [selected, setSelected] = useState<RangeKey>("1H")
+//
+// Controlled: the selected window is owned by ItemCard so the price chart can
+// zoom to the same window (the buttons reshape the chart, not just this strip).
+export function RangeBar({
+  snapshot,
+  refMs,
+  selected,
+  onSelect,
+}: {
+  snapshot: ItemSnapshot
+  refMs: number
+  selected: RangeKey
+  onSelect: (key: RangeKey) => void
+}) {
   const view = selectRangeView(snapshot, selected, refMs)
   const fraction = rangePositionFraction(view)
 
@@ -23,7 +34,7 @@ export function RangeBar({ snapshot, refMs }: { snapshot: ItemSnapshot; refMs: n
           {RANGE_KEYS.map((key) => (
             <button
               key={key}
-              onClick={() => setSelected(key)}
+              onClick={() => onSelect(key)}
               className={cn(
                 "min-w-[30px] rounded px-1.5 py-0.5 font-mono text-[10px] font-medium transition-colors",
                 selected === key
@@ -49,7 +60,10 @@ export function RangeBar({ snapshot, refMs }: { snapshot: ItemSnapshot; refMs: n
           </span>
           {view.partial && <span className="text-spread">PARTIAL</span>}
           {view.currencyBreak && (
-            <span className="text-spread" title="Window crossed a currency switch; earlier different-currency points excluded, not blended">
+            <span
+              className="rounded border border-spread/50 bg-spread/10 px-1 py-px font-semibold text-spread"
+              title="Window crossed a currency switch; range is the current-currency run only — earlier different-currency points are excluded, not blended"
+            >
               ↯ {view.currency} ONLY
             </span>
           )}
